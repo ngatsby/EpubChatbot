@@ -1,10 +1,7 @@
 streamlit
-PyMuPDF
+ebooklib
+beautifulsoup4
 sentence-transformers
 faiss-cpu
-numpy
 google-generativeai
-tqdm
-ebooklib
-bs4
-lxml
+
