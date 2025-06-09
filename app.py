@@ -8,7 +8,7 @@ import faiss
 import numpy as np
 import google.generativeai as genai
 
-# --- API Key 설정 ---
+# --- API Key ---
 GEMINI_API_KEY = st.secrets.get("Key")
 if not GEMINI_API_KEY:
     st.error("Gemini API key not found. Please add 'Key' to your Streamlit secrets.")
@@ -16,7 +16,7 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 모델 로딩 ---
+# --- Load Models ---
 @st.cache_resource
 def load_gemini_model():
     return genai.GenerativeModel("models/gemini-1.5-flash")
@@ -28,7 +28,7 @@ def load_embedding_model():
 model = load_gemini_model()
 embedder = load_embedding_model()
 
-# --- 함수 정의 ---
+# --- Utils ---
 def extract_epub_chapters(epub_path):
     book = epub.read_epub(epub_path)
     titles = []
@@ -37,31 +37,31 @@ def extract_epub_chapters(epub_path):
     def extract_from_toc(toc_items):
         for item in toc_items:
             if isinstance(item, epub.Link):
-                titles.append(item.title)
                 doc = book.get_item_with_href(item.href)
                 if doc:
                     soup = BeautifulSoup(doc.get_body_content(), "html.parser")
-                    chapters.append(soup.get_text(separator="\n"))
+                    text = soup.get_text(separator="\n").strip()
+                    if text:
+                        titles.append(item.title)
+                        chapters.append(text)
             elif isinstance(item, (list, tuple)):
                 extract_from_toc(item)
 
     extract_from_toc(book.toc)
 
-    # 보완: 목차 정보 없을 때 추정으로 대체
-    if not titles:
+    # fallback if no toc items
+    if not chapters:
         for item in book.get_items_of_type(epub.ITEM_DOCUMENT):
             soup = BeautifulSoup(item.get_content(), "html.parser")
-            text = soup.get_text(separator="\n")
-            if any(kw in text.lower() for kw in ['목차', '차례', 'contents', 'table of contents', 'index']):
-                titles.append(f"[추정목차] {item.get_name()}")
+            text = soup.get_text(separator="\n").strip()
+            if text:
+                titles.append(item.get_name())
                 chapters.append(text)
 
     return titles, chapters
 
 def create_embeddings(texts):
-    if not texts:
-        return np.array([])
-    return embedder.encode(texts)
+    return embedder.encode(texts) if texts else np.array([])
 
 def build_faiss_index(embeddings):
     if embeddings.size == 0:
@@ -84,8 +84,8 @@ def ask_gemini(question, context):
     except Exception as e:
         return f"[Gemini 응답 오류] {e}"
 
-# --- Streamlit UI 시작 ---
-st.title("📘 ePub 챕터 기반 Gemini 요약 & QnA 챗봇")
+# --- Streamlit UI ---
+st.title("📘 ePub 챕터 기반 요약 & Gemini QnA")
 
 uploaded_file = st.file_uploader("ePub 파일 업로드", type="epub")
 
@@ -94,49 +94,53 @@ if uploaded_file:
         tmp_file.write(uploaded_file.read())
         tmp_path = tmp_file.name
 
-    with st.spinner("📖 ePub 파일 처리 중..."):
+    with st.spinner("📖 ePub 파일 분석 중..."):
         titles, chapters = extract_epub_chapters(tmp_path)
         os.remove(tmp_path)
 
-    if not titles:
-        st.error("챕터(목차)를 추출할 수 없습니다.")
+    if not chapters:
+        st.error("본문을 추출할 수 없습니다.")
         st.stop()
 
-    st.success(f"✅ {len(titles)}개의 챕터가 추출되었습니다.")
-    chapter_idx = st.selectbox("📚 읽고 싶은 챕터를 선택하세요", list(range(len(titles))), format_func=lambda i: titles[i])
+    # 인덱스 보정
+    min_len = min(len(titles), len(chapters))
+    titles, chapters = titles[:min_len], chapters[:min_len]
+
+    st.success(f"{len(chapters)}개의 챕터가 준비되었습니다.")
+    chapter_idx = st.selectbox("📚 챕터를 선택하세요", list(range(min_len)), format_func=lambda i: titles[i])
     selected_text = chapters[chapter_idx]
 
-    if selected_text:
-        st.subheader("📝 챕터 한글 요약")
-        st.write(ask_gemini("이 내용을 한국어로 요약해줘", selected_text))
+    st.subheader("📝 챕터 한글 요약")
+    st.write(ask_gemini("이 내용을 한국어로 요약해줘", selected_text))
 
-        st.subheader("📝 Chapter Summary (English)")
-        st.write(ask_gemini("Summarize this chapter in English.", selected_text))
+    st.subheader("📝 Chapter Summary (English)")
+    st.write(ask_gemini("Summarize this chapter in English.", selected_text))
 
-        with st.spinner("📊 임베딩 처리 중..."):
-            embeddings = create_embeddings([selected_text])
-            index = build_faiss_index(np.array(embeddings))
+    # 챕터 기반 QnA
+    st.subheader("💬 챕터 질문")
+    with st.spinner("📊 임베딩 처리 중..."):
+        chapter_embedding = create_embeddings([selected_text])
+        chapter_index = build_faiss_index(np.array(chapter_embedding))
 
-        st.subheader("💬 챕터에 대해 질문해보세요")
-        chapter_question = st.text_input("질문을 입력하세요", key="chapter_q")
-        if chapter_question and index:
-            q_emb = embedder.encode([chapter_question])
-            D, I = index.search(np.array(q_emb), k=1)
-            context = selected_text
-            st.markdown("**🧠 Gemini의 답변:**")
-            st.write(ask_gemini(chapter_question, context))
+    chapter_q = st.text_input("질문을 입력하세요", key="chapter_q")
+    if chapter_q and chapter_index:
+        q_emb = embedder.encode([chapter_q])
+        D, I = chapter_index.search(np.array(q_emb), k=1)
+        context = selected_text
+        st.markdown("**🧠 Gemini의 답변:**")
+        st.write(ask_gemini(chapter_q, context))
 
-        st.divider()
-        st.subheader("🌍 전체 문서에 대해 질문하기")
+    # 전체 문서 기반 QnA
+    st.divider()
+    st.subheader("🌍 전체 문서 질문")
 
-        # 전체 벡터 저장 및 검색
-        all_embeddings = create_embeddings(chapters)
-        all_index = build_faiss_index(np.array(all_embeddings))
+    all_embeddings = create_embeddings(chapters)
+    all_index = build_faiss_index(np.array(all_embeddings))
+    doc_q = st.text_input("전체 문서에 대한 질문을 입력하세요", key="doc_q")
 
-        doc_question = st.text_input("전체 문서에 대한 질문을 입력하세요", key="doc_q")
-        if doc_question and all_index:
-            q_emb = embedder.encode([doc_question])
-            D, I = all_index.search(np.array(q_emb), k=3)
-            context = "\n\n".join([chapters[i] for i in I[0]])
-            st.markdown("**🧠 Gemini의 답변:**")
-            st.write(ask_gemini(doc_question, context))
+    if doc_q and all_index:
+        q_emb = embedder.encode([doc_q])
+        D, I = all_index.search(np.array(q_emb), k=3)
+        context = "\n".join([chapters[i] for i in I[0] if i < len(chapters)])
+        st.markdown("**🧠 Gemini의 답변:**")
+        st.write(ask_gemini(doc_q, context))
