@@ -42,75 +42,93 @@ def extract_epub_chapters(epub_path):
     # 챕터 파일 경로(href)와 해당 제목을 매핑하기 위한 딕셔너리
     toc_href_to_title = {}
 
-    # ePub 목차 항목을 재귀적으로 처리하여 href와 제목 매핑을 만듭니다.
-    def process_toc_entry(entry):
-        if isinstance(entry, epub.EpubNavPoint):
-            # EpubNavPoint는 목차의 특정 지점을 나타내며, 제목과 href를 가집니다.
-            href_base = entry.href.split('#')[0] # 앵커(#) 부분 제거
-            if entry.title:
-                toc_href_to_title[href_base] = entry.title.strip()
+    # Helper function to recursively process TOC entries and yield (href, title) pairs
+    def process_toc_item_recursively(toc_entry_item):
+        """
+        Recursively processes an ePub TOC entry to extract its href and title.
+        Handles EpubNavPoint, EpubHtml, and common tuple structures.
+        """
+        href = None
+        title = None
+        
+        if isinstance(toc_entry_item, epub.EpubNavPoint):
+            # 표준 목차 내비게이션 포인트
+            href = toc_entry_item.href
+            title = toc_entry_item.title
             
-            # 중첩된 목차 항목(자식)이 있다면 재귀적으로 처리합니다.
-            if entry.children:
-                for child in entry.children:
-                    process_toc_entry(child)
-        elif isinstance(entry, epub.EpubHtml):
-            # EpubHtml 항목이 목차에 직접 포함될 수 있습니다.
-            href_base = entry.href.split('#')[0]
-            if hasattr(entry, 'title') and entry.title: # EpubHtml 객체에 제목 속성이 있는 경우
-                toc_href_to_title[href_base] = entry.title.strip()
-            # EpubHtml에도 subitems가 있을 수 있으므로 처리합니다.
-            if hasattr(entry, 'subitems') and entry.subitems:
-                 for sub_item in entry.subitems:
-                    process_toc_entry(sub_item)
-        elif isinstance(entry, tuple) and len(entry) == 2 and isinstance(entry[0], epub.EpubHtml):
-            # 일부 ePub 목차는 (EpubHtml 객체, 제목 문자열) 형태의 튜플로 구성될 수 있습니다.
-            href_base = entry[0].href.split('#')[0]
-            if entry[1]: # 튜플의 두 번째 요소가 제목입니다.
-                toc_href_to_title[href_base] = entry[1].strip()
-            if hasattr(entry[0], 'subitems') and entry[0].subitems:
-                 for sub_item in entry[0].subitems:
-                    process_toc_entry(sub_item)
+            # 하위 챕터(자식) 재귀적으로 처리
+            for child in toc_entry_item.children:
+                yield from process_toc_item_recursively(child)
+                
+        elif isinstance(toc_entry_item, epub.EpubHtml):
+            # EpubHtml 객체가 TOC에 직접 포함된 경우
+            href = toc_entry_item.href
+            # EpubHtml 객체에 'title' 속성이 있을 수 있음
+            title = getattr(toc_entry_item, 'title', None)
+            
+        elif isinstance(toc_entry_item, tuple) and len(toc_entry_item) == 2:
+            # TOC 항목이 튜플인 경우 (예: (EpubHtml, 제목_문자열)) 처리
+            possible_html_item, possible_title = toc_entry_item
+            if isinstance(possible_html_item, epub.EpubHtml):
+                href = possible_html_item.href
+                title = possible_title # 제목은 튜플의 두 번째 요소
+            
+            # 튜플의 첫 번째 요소가 (Section과 같은) 컨테이너이거나
+            # 다른 중첩된 구조를 포함하는 경우
+            if hasattr(possible_html_item, 'subitems') and possible_html_item.subitems:
+                for sub_item in possible_html_item.subitems:
+                    yield from process_toc_item_recursively(sub_item)
+            elif isinstance(possible_html_item, epub.Section): # Section은 하위 항목을 가질 수 있음
+                for sub_item in possible_html_item.subitems:
+                    yield from process_toc_item_recursively(sub_item)
+        
+        # 앵커(#)를 제거하여 href 정규화
+        if href:
+            normalized_href = href.split('#')[0]
+            yield (normalized_href, title.strip() if title else "")
 
-    # book.toc에 있는 모든 최상위 목차 항목부터 처리를 시작합니다.
-    for item in book.toc:
-        process_toc_entry(item)
+    # book.toc를 반복하여 toc_href_to_title 맵 채우기
+    for toc_entry in book.toc:
+        for href, title in process_toc_item_recursively(toc_entry):
+            # 제목이 있거나 새로운 href 항목인 경우에만 추가
+            if title or href not in toc_href_to_title:
+                toc_href_to_title[href] = title
 
-    # 이제 모든 문서 항목을 반복하며 내용을 추출하고 가장 적절한 제목을 적용합니다.
+    # 이제 모든 문서 항목을 반복하여 콘텐츠 추출 및 최적의 제목 적용
     for item in book.get_items():
-        if item.get_type() == epub.ITEM_DOCUMENT: # 실제 HTML 콘텐츠 파일인 경우
+        if item.get_type() == epub.ITEM_DOCUMENT: # HTML 콘텐츠 파일인 경우
             soup = BeautifulSoup(item.get_content(), "html.parser")
             
             chapter_title = ""
-            # 현재 항목의 파일 이름을 정규화합니다 (href와 유사).
+            # TOC href와 일치하도록 항목의 파일 이름을 정규화
             item_file_name_normalized = item.file_name.split('#')[0]
 
-            # 1. 첫 번째 시도: 목차 맵에서 제목을 가져옵니다.
-            if item_file_name_normalized in toc_href_to_title:
+            # 우선순위 1: TOC 매핑에서 제목 가져오기
+            if item_file_name_normalized in toc_href_to_title and toc_href_to_title[item_file_name_normalized]:
                 chapter_title = toc_href_to_title[item_file_name_normalized]
             
-            # 2. 두 번째 시도: HTML 콘텐츠 내의 <title> 태그를 확인합니다.
+            # 우선순위 2: HTML <title> 태그에서 제목 가져오기
             if not chapter_title:
                 title_tag = soup.find('title')
                 if title_tag and title_tag.string:
                     chapter_title = title_tag.string.strip()
             
-            # 3. 세 번째 시도: HTML 콘텐츠 내의 첫 번째 헤딩(h1-h6)을 제목으로 사용합니다.
+            # 우선순위 3: HTML 콘텐츠의 첫 번째 헤딩(h1-h6)에서 제목 가져오기
             if not chapter_title:
-                for h_level in range(1, 7): # h1부터 h6까지 반복
+                for h_level in range(1, 7): # h1, h2, ..., h6 확인
                     heading_tag = soup.find(f'h{h_level}')
                     if heading_tag and heading_tag.get_text(strip=True):
                         chapter_title = heading_tag.get_text(strip=True)
-                        break # 제목을 찾았으면 더 이상 찾지 않습니다.
+                        break # 첫 번째 헤딩을 찾으면 중지
             
-            # 4. 최종 대체: 제목을 찾지 못했다면 "Unnamed Chapter"를 할당합니다.
+            # 최종 대체: 제목을 찾지 못하면 "Unnamed Chapter" 할당
             if not chapter_title:
                 chapter_title = f"Unnamed Chapter {len(titles)+1}"
             
-            # 챕터의 전체 텍스트 내용을 추출합니다.
+            # 챕터의 깨끗한 텍스트 콘텐츠 추출
             text = soup.get_text(separator="\n", strip=True)
             
-            # 내용이 충분한 챕터만 포함합니다 (예: 길이가 100자 이상).
+            # 충분한 내용이 있는 챕터만 포함 (예: 100자 이상)
             if len(text.strip()) > 100:
                 titles.append(chapter_title)
                 chapters.append(text)
@@ -143,7 +161,7 @@ st.title("📖 ePub 챕터 요약 & 챗봇")
 uploaded_file = st.file_uploader("📤 ePub 파일 업로드", type="epub")
 
 if uploaded_file:
-    # 임시 파일에 업로드된 ePub 파일을 저장합니다.
+    # 업로드된 ePub 파일을 임시 위치에 저장
     with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp_file:
         tmp_file.write(uploaded_file.read())
         epub_path = tmp_file.name
@@ -155,7 +173,7 @@ if uploaded_file:
         st.error("❌ 챕터를 추출할 수 없습니다. ePub 구조를 확인해주세요.")
     else:
         st.success(f"✅ {len(titles)}개의 챕터를 추출했습니다.")
-        # 챕터 선택을 위한 드롭다운 메뉴를 만듭니다.
+        # 챕터 선택을 위한 드롭다운 메뉴 생성
         chapter_idx = st.selectbox("🔍 요약할 챕터를 선택하세요:", range(len(titles)), format_func=lambda i: titles[i])
 
         selected_text = chapters[chapter_idx]
@@ -183,7 +201,8 @@ if uploaded_file:
         question = st.text_input("질문을 입력하세요 (선택한 챕터 기준)")
         if question:
             question_embedding = embedder.encode([question])
-            D, I = index.search(np.array(question_embedding), k=1)
+            # 실제 RAG에서는 전체 인덱스를 검색하여 컨텍스트를 찾지만, 여기서는 선택된 챕터의 임베딩만 사용
+            D, I = index.search(np.array(question_embedding), k=1) 
             context = selected_text
             prompt = f"""
 다음 글을 참고하여 질문에 답해줘.
@@ -203,6 +222,7 @@ if uploaded_file:
         if global_question:
             with st.spinner("전체 문서에서 답변 중..."):
                 full_text = "\n".join(chapters)
+                # 모델 입력 제한을 위해 full_text 길이 조절
                 prompt = f"""
 다음 ePub 전체 내용을 바탕으로 질문에 답하세요.
 ---
@@ -215,7 +235,7 @@ if uploaded_file:
                 st.write(global_answer)
 
     try:
-        # 임시 파일 정리
+        # 임시 ePub 파일 정리
         os.remove(epub_path)
     except Exception as e:
         st.error(f"임시 파일 삭제 중 오류 발생: {e}")
