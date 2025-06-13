@@ -44,53 +44,66 @@ def extract_epub_chapters(epub_path):
 
     def process_toc_item_recursively(toc_entry_item):
         """
-        Recursively processes an ePub TOC entry to extract its href and title.
-        Handles EpubNavPoint, EpubHtml, EpubSection, and common tuple structures.
+        ePub 목차 항목을 재귀적으로 처리하여 href와 title을 추출합니다.
+        EpubNavPoint, EpubHtml, EpubSection 및 일반적인 튜플 구조를 처리합니다.
+        알 수 없는 유형의 항목은 건너뛰어 오류를 방지합니다.
         """
-        href = None
-        title = None
-        children = []
+        current_href = None
+        current_title = None
+        children_to_recurse = []
 
-        # 튜플 유형을 가장 먼저 처리하여 AttributeError 방지
+        # Case 1: TOC 항목이 튜플인 경우 (가장 먼저 확인하여 다양한 튜플 형태 처리)
         if isinstance(toc_entry_item, tuple):
             if len(toc_entry_item) >= 1:
-                possible_item = toc_entry_item[0]
-                if isinstance(possible_item, (epub.EpubHtml, epub.EpubNavPoint, epub.Section)):
-                    href = getattr(possible_item, 'href', None)
-                    if len(toc_entry_item) > 1:
-                        # 튜플의 두 번째 요소가 일반적으로 제목입니다.
-                        title = toc_entry_item[1] 
-                    # 자식 항목도 함께 처리
-                    children = getattr(possible_item, 'children', []) or getattr(possible_item, 'subitems', [])
-                elif len(toc_entry_item) == 2 and isinstance(toc_entry_item[0], str) and isinstance(toc_entry_item[1], str):
-                    # (href_string, title_string) 형태의 튜플 처리
-                    href = toc_entry_item[0]
-                    title = toc_entry_item[1]
+                potential_item = toc_entry_item[0]
+                potential_title_str = toc_entry_item[1] if len(toc_entry_item) > 1 else None
+
+                if isinstance(potential_item, (epub.EpubNavPoint, epub.EpubHtml)):
+                    current_href = getattr(potential_item, 'href', None)
+                    current_title = potential_title_str if potential_title_str else getattr(potential_item, 'title', None)
+                    children_to_recurse = getattr(potential_item, 'children', []) or getattr(potential_item, 'subitems', [])
+                elif isinstance(potential_item, epub.Section):
+                    current_title = potential_title_str if potential_title_str else getattr(potential_item, 'title', None)
+                    children_to_recurse = getattr(potential_item, 'subitems', [])
+                elif isinstance(potential_item, str) and len(toc_entry_item) == 2:
+                    # (href_string, title_string) 형태의 튜플
+                    current_href = potential_item
+                    current_title = potential_title_str
+                # 튜플 내부에 또 다른 예상치 못한 유형이 있는 경우
+                else:
+                    st.warning(f"경고: 목차 튜플 내부에 예상치 못한 항목 유형 발견: {type(potential_item)}. 이 항목은 건너뜁니다.")
         
+        # Case 2: 표준 EpubNavPoint (목차 내비게이션 포인트)
         elif isinstance(toc_entry_item, epub.EpubNavPoint):
-            # 표준 목차 내비게이션 포인트
-            href = toc_entry_item.href
-            title = toc_entry_item.title
-            children = toc_entry_item.children
+            current_href = getattr(toc_entry_item, 'href', None)
+            current_title = getattr(toc_entry_item, 'title', None)
+            children_to_recurse = getattr(toc_entry_item, 'children', [])
                 
+        # Case 3: EpubHtml 객체가 TOC에 직접 포함된 경우
         elif isinstance(toc_entry_item, epub.EpubHtml):
-            # EpubHtml 객체가 TOC에 직접 포함된 경우
-            href = toc_entry_item.href
-            title = getattr(toc_entry_item, 'title', None) # EpubHtml에도 title 속성이 있을 수 있음
-            children = getattr(toc_entry_item, 'subitems', []) # EpubHtml도 하위 항목을 가질 수 있음
+            current_href = getattr(toc_entry_item, 'href', None)
+            current_title = getattr(toc_entry_item, 'title', None) # EpubHtml에도 title 속성이 있을 수 있음
+            children_to_recurse = getattr(toc_entry_item, 'subitems', []) # EpubHtml도 하위 항목을 가질 수 있음
         
+        # Case 4: EpubSection 객체가 TOC에 직접 포함된 경우 (중첩된 섹션용)
         elif isinstance(toc_entry_item, epub.Section):
-            # EpubSection 객체가 TOC에 직접 포함된 경우 (중첩된 섹션용)
-            title = toc_entry_item.title
-            children = toc_entry_item.subitems # Section은 하위 항목을 가짐
+            current_title = getattr(toc_entry_item, 'title', None)
+            children_to_recurse = getattr(toc_entry_item, 'subitems', []) # Section은 하위 항목을 가짐
+            # 섹션 자체는 콘텐츠 href를 가지지 않을 수 있으므로, 아래 yield 조건에 걸리지 않을 수 있습니다.
+            # 하지만 자식 항목들은 처리됩니다.
+        
+        # Case 5: 어떤 유형에도 해당하지 않는 경우 (예상치 못한 유형)
+        else:
+            st.warning(f"경고: 알 수 없는 목차 항목 유형 발견: {type(toc_entry_item)}. 이 항목은 건너뜁니다.")
+            return # 유효한 href나 title을 반환하지 않고, 자식도 처리하지 않습니다.
 
-        # href가 있는 경우에만 (정규화된 href, 제목) 쌍을 반환
-        if href:
-            normalized_href = href.split('#')[0]
-            yield (normalized_href, title.strip() if title else "")
+        # 현재 항목의 정보를 유효한 href가 있을 경우에만 yield합니다.
+        if current_href:
+            normalized_href = current_href.split('#')[0] # 앵커(#) 부분 제거하여 href 정규화
+            yield (normalized_href, current_title.strip() if current_title else "")
 
-        # 자식 항목이 있다면 재귀적으로 처리
-        for child in children:
+        # 자식 항목이 있다면 재귀적으로 처리합니다.
+        for child in children_to_recurse:
             yield from process_toc_item_recursively(child)
 
     # book.toc를 반복하여 toc_href_to_title 맵을 채웁니다.
@@ -102,7 +115,7 @@ def extract_epub_chapters(epub_path):
 
     # 이제 모든 문서 항목을 반복하며 내용을 추출하고 최적의 제목을 적용합니다.
     for item in book.get_items():
-        if item.get_type() == epub.ITEM_DOCUMENT: # HTML 콘텐츠 파일인 경우
+        if item.get_type() == epub.ITEM_DOCUMENT: # 실제 HTML 콘텐츠 파일인 경우
             soup = BeautifulSoup(item.get_content(), "html.parser")
             
             chapter_title = ""
