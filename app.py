@@ -35,6 +35,7 @@ def extract_epub_chapters(epub_path):
             elif isinstance(item, list):
                 result.extend(flatten_toc(item))
         return result
+
     toc_entries = flatten_toc(book.toc)
     skip_keywords = ['표지', '차례', '목차', '저작권', '판권', 'prologue', 'contents', 'copyright', 'cover']
 
@@ -46,16 +47,35 @@ def extract_epub_chapters(epub_path):
         if item is None:
             continue
         soup = BeautifulSoup(item.get_content(), "html.parser")
-        text = soup.get_text(separator="\n", strip=True)
-        if len(text.strip()) > 50:
-            chapters.append({"title": title, "text": text.strip()})
+        # 한 파일에 여러 챕터가 있을 경우 헤더 태그로 분리
+        headers = soup.find_all(['h1', 'h2', 'h3'])
+        if headers:
+            for idx, header in enumerate(headers):
+                chap_title = header.get_text(separator=" ", strip=True)
+                # 챕터 제목이 목차와 유사하면 본문 추출
+                if chap_title.strip() and (chap_title.strip() in title or title in chap_title.strip()):
+                    content = []
+                    for sibling in header.next_siblings:
+                        if getattr(sibling, 'name', None) in ['h1', 'h2', 'h3']:
+                            break
+                        if isinstance(sibling, str):
+                            content.append(sibling.strip())
+                        else:
+                            content.append(sibling.get_text(separator="\n", strip=True))
+                    text = "\n".join([t for t in content if t])
+                    if len(text.strip()) > 50:
+                        chapters.append({"title": chap_title, "text": text.strip()})
+        else:
+            # 헤더가 없으면 전체 텍스트
+            text = soup.get_text(separator="\n", strip=True)
+            if len(text.strip()) > 50:
+                chapters.append({"title": title, "text": text.strip()})
 
     # 2. TOC에서 아무것도 추출하지 못했다면 spine 기반으로 추출
     if not chapters:
         for idx, item in enumerate(book.get_items_of_type(epub.ITEM_DOCUMENT)):
             soup = BeautifulSoup(item.get_content(), "html.parser")
             text = soup.get_text(separator="\n", strip=True)
-            # spine에는 제목이 없으므로 임시 제목 부여
             if len(text.strip()) > 50:
                 chapters.append({"title": f"Chapter {idx+1}", "text": text.strip()})
 
