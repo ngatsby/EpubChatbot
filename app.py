@@ -1,6 +1,5 @@
 import streamlit as st
 
-# 반드시 첫 줄에 위치!
 st.set_page_config(page_title="📚 ePub 챗봇", layout="wide")
 
 import tempfile
@@ -8,6 +7,7 @@ import os
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+import textwrap
 
 # --- 초기 설정 ---
 GEMINI_API_KEY = st.secrets.get("Key")
@@ -42,8 +42,7 @@ def extract_epub_chapters(epub_path):
 
     toc_entries = flatten_toc(book.toc)
 
-    # 불필요한 챕터(표지, 차례, 저작권 등) 필터링 키워드
-    skip_keywords = ['표지', '차례', '목차', '저작권', '판권', '서문', 'prologue', 'contents', 'copyright', 'cover']
+    skip_keywords = ['표지', '차례', '목차', '저작권', '판권', 'prologue', 'contents', 'copyright', 'cover']
 
     for title, href in toc_entries:
         if any(k.lower() in title.lower() for k in skip_keywords):
@@ -53,7 +52,6 @@ def extract_epub_chapters(epub_path):
         if item is not None:
             soup = BeautifulSoup(item.get_content(), "html.parser")
             text = soup.get_text(separator="\n", strip=True)
-            # 본문이 너무 짧으면 건너뜀
             if len(text.strip()) > 200:
                 chapters.append({"title": title.strip(), "text": text.strip()})
     return chapters
@@ -90,68 +88,11 @@ if uploaded_file:
         selected_title = selected_chapter["title"]
         selected_text = selected_chapter["text"]
 
-        # 선택한 챕터 본문 미리보기(앞부분만)
+        # 본문 미리보기 제거, 제목만 표시
         st.markdown(f"#### 📄 선택한 챕터: {selected_title}")
-        with st.expander("📑 본문 미리보기", expanded=False):
-            st.write(selected_text[:1000] + ("..." if len(selected_text) > 1000 else ""))
 
         with st.spinner("🧠 요약 중..."):
-            summary_prompt_ko = f"아래 글은 '{selected_title}'라는 챕터의 전체 본문이야. 이 글만 참고해서 한국어로 5줄 이내로 요약해줘.\n\n{textwrap.shorten(selected_text, width=4000, placeholder='...')}"
-            summary_prompt_en = f"This is the full text of the chapter titled '{selected_title}'. Summarize ONLY this text in English in less than 5 sentences.\n\n{textwrap.shorten(selected_text, width=4000, placeholder='...')}"
-
-            summary_ko = ask_gemini(summary_prompt_ko)
-            summary_en = ask_gemini(summary_prompt_en)
-
-        st.subheader("📝 요약")
-        st.markdown("**🇰🇷 한국어 요약:**")
-        st.write(summary_ko)
-        st.markdown("**🇺🇸 English Summary:**")
-        st.write(summary_en)
-
-        st.divider()
-        st.subheader("💬 챕터 기반 질의응답")
-
-        question = st.text_input("질문을 입력하세요 (선택한 챕터 기준)")
-        if question:
-            context = selected_text
-            prompt = f"""
-아래는 '{selected_title}'라는 챕터의 전체 본문이야. 이 본문만 참고해서 질문에 답해줘.
-
----
-
-{context}
-
----
-
-질문: {question}
-"""
-            answer = ask_gemini(prompt)
-            st.markdown("**🤖 답변:**")
-            st.write(answer)
-
-        st.divider()
-        st.subheader("🌐 전체 문서 기반 질의응답")
-
-        global_question = st.text_input("전체 문서에 대해 질문하세요")
-        if global_question:
-            with st.spinner("전체 문서에서 답변 중..."):
-                full_text = "\n".join([c["text"] for c in chapters])
-                prompt = f"""
-다음 ePub 전체 내용을 바탕으로 질문에 답하세요.
-
----
-
-{full_text[:8000]}
-
----
-
-질문: {global_question}
-"""
-                global_answer = ask_gemini(prompt)
-                st.markdown("**🌍 전체 문서 응답:**")
-                st.write(global_answer)
-
-    try:
-        os.remove(epub_path)
-    except:
-        pass
+            summary_prompt_ko = (
+                f"아래 글은 '{selected_title}'라는 챕터의 전체 본문이야. "
+                f"이 글만 참고해서 한국어로 5줄 이내로 요약해줘.\n\n"
+                f"{textwrap.shorten(selected
