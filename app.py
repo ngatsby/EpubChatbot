@@ -27,7 +27,7 @@ model = load_gemini_model()
 
 def extract_epub_chapters(epub_path):
     book = epub.read_epub(epub_path)
-    titles, chapters = [], []
+    chapters = []
 
     def flatten_toc(toc):
         result = []
@@ -35,8 +35,6 @@ def extract_epub_chapters(epub_path):
             if isinstance(item, epub.Link):
                 result.append((item.title, item.href))
             elif isinstance(item, tuple) and len(item) == 2:
-                # (section_title, [subitems])
-                # section_title = item[0]  # 필요시 사용
                 result.extend(flatten_toc(item[1]))
             elif isinstance(item, list):
                 result.extend(flatten_toc(item))
@@ -51,9 +49,8 @@ def extract_epub_chapters(epub_path):
             soup = BeautifulSoup(item.get_content(), "html.parser")
             text = soup.get_text(separator="\n", strip=True)
             if len(text.strip()) > 100:
-                titles.append(title.strip())
-                chapters.append(text)
-    return titles, chapters
+                chapters.append({"title": title.strip(), "text": text})
+    return chapters
 
 def ask_gemini(prompt_text):
     try:
@@ -74,17 +71,18 @@ if uploaded_file:
         epub_path = tmp_file.name
 
     with st.spinner("📚 ePub 파일 처리 중..."):
-        titles, chapters = extract_epub_chapters(epub_path)
+        chapters = extract_epub_chapters(epub_path)
 
-    if not titles:
+    if not chapters:
         st.error("❌ 챕터를 추출할 수 없습니다. ePub 구조를 확인해주세요.")
     else:
-        st.success(f"✅ {len(titles)}개의 챕터를 추출했습니다.")
-        chapter_idx = st.selectbox("🔍 요약할 챕터를 선택하세요:", range(len(titles)), format_func=lambda i: titles[i])
+        st.success(f"✅ {len(chapters)}개의 챕터를 추출했습니다.")
+        chapter_titles = [c["title"] for c in chapters]
+        chapter_idx = st.selectbox("🔍 요약할 챕터를 선택하세요:", range(len(chapters)), format_func=lambda i: chapter_titles[i])
 
-        # 반드시 선택한 챕터의 본문만 사용!
-        selected_title = titles[chapter_idx]
-        selected_text = chapters[chapter_idx]
+        selected_chapter = chapters[chapter_idx]
+        selected_title = selected_chapter["title"]
+        selected_text = selected_chapter["text"]
 
         st.markdown(f"### 📄 선택한 챕터: {selected_title}")
 
@@ -127,24 +125,4 @@ if uploaded_file:
 
         global_question = st.text_input("전체 문서에 대해 질문하세요")
         if global_question:
-            with st.spinner("전체 문서에서 답변 중..."):
-                full_text = "\n".join(chapters)
-                prompt = f"""
-다음 ePub 전체 내용을 바탕으로 질문에 답하세요.
-
----
-
-{full_text[:8000]}
-
----
-
-질문: {global_question}
-"""
-                global_answer = ask_gemini(prompt)
-                st.markdown("**🌍 전체 문서 응답:**")
-                st.write(global_answer)
-
-    try:
-        os.remove(epub_path)
-    except:
-        pass
+            with st.spinner("전체 문
