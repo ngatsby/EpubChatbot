@@ -42,14 +42,20 @@ def extract_epub_chapters(epub_path):
 
     toc_entries = flatten_toc(book.toc)
 
+    # 불필요한 챕터(표지, 차례, 저작권 등) 필터링 키워드
+    skip_keywords = ['표지', '차례', '목차', '저작권', '판권', '서문', 'prologue', 'contents', 'copyright', 'cover']
+
     for title, href in toc_entries:
+        if any(k.lower() in title.lower() for k in skip_keywords):
+            continue
         href_clean = href.split('#')[0]
         item = book.get_item_with_href(href_clean)
         if item is not None:
             soup = BeautifulSoup(item.get_content(), "html.parser")
             text = soup.get_text(separator="\n", strip=True)
-            if len(text.strip()) > 100:
-                chapters.append({"title": title.strip(), "text": text})
+            # 본문이 너무 짧으면 건너뜀
+            if len(text.strip()) > 200:
+                chapters.append({"title": title.strip(), "text": text.strip()})
     return chapters
 
 def ask_gemini(prompt_text):
@@ -84,11 +90,14 @@ if uploaded_file:
         selected_title = selected_chapter["title"]
         selected_text = selected_chapter["text"]
 
-        st.markdown(f"### 📄 선택한 챕터: {selected_title}")
+        # 선택한 챕터 본문 미리보기(앞부분만)
+        st.markdown(f"#### 📄 선택한 챕터: {selected_title}")
+        with st.expander("📑 본문 미리보기", expanded=False):
+            st.write(selected_text[:1000] + ("..." if len(selected_text) > 1000 else ""))
 
         with st.spinner("🧠 요약 중..."):
-            summary_prompt_ko = f"다음 글을 한국어로 요약해줘:\n\n{selected_text[:4000]}"
-            summary_prompt_en = f"Summarize the following text in English:\n\n{selected_text[:4000]}"
+            summary_prompt_ko = f"아래 글은 '{selected_title}'라는 챕터의 전체 본문이야. 이 글만 참고해서 한국어로 5줄 이내로 요약해줘.\n\n{textwrap.shorten(selected_text, width=4000, placeholder='...')}"
+            summary_prompt_en = f"This is the full text of the chapter titled '{selected_title}'. Summarize ONLY this text in English in less than 5 sentences.\n\n{textwrap.shorten(selected_text, width=4000, placeholder='...')}"
 
             summary_ko = ask_gemini(summary_prompt_ko)
             summary_en = ask_gemini(summary_prompt_en)
@@ -106,7 +115,7 @@ if uploaded_file:
         if question:
             context = selected_text
             prompt = f"""
-다음 글을 참고하여 질문에 답해줘.
+아래는 '{selected_title}'라는 챕터의 전체 본문이야. 이 본문만 참고해서 질문에 답해줘.
 
 ---
 
