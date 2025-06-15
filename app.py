@@ -5,12 +5,9 @@ st.set_page_config(page_title="📚 ePub 챗봇", layout="wide")
 
 import tempfile
 import os
-import numpy as np
-import faiss
-from sentence_transformers import SentenceTransformer
-import google.generativeai as genai
 from ebooklib import epub
 from bs4 import BeautifulSoup
+import google.generativeai as genai
 
 # --- 초기 설정 ---
 GEMINI_API_KEY = st.secrets.get("Key")
@@ -24,12 +21,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 def load_gemini_model():
     return genai.GenerativeModel("models/gemini-1.5-flash")
 
-@st.cache_resource
-def load_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
-
 model = load_gemini_model()
-embedder = load_embedder()
 
 # --- 함수들 ---
 
@@ -43,6 +35,8 @@ def extract_epub_chapters(epub_path):
             if isinstance(item, epub.Link):
                 result.append((item.title, item.href))
             elif isinstance(item, tuple) and len(item) == 2:
+                # (section_title, [subitems])
+                # section_title = item[0]  # 필요시 사용
                 result.extend(flatten_toc(item[1]))
             elif isinstance(item, list):
                 result.extend(flatten_toc(item))
@@ -88,7 +82,11 @@ if uploaded_file:
         st.success(f"✅ {len(titles)}개의 챕터를 추출했습니다.")
         chapter_idx = st.selectbox("🔍 요약할 챕터를 선택하세요:", range(len(titles)), format_func=lambda i: titles[i])
 
+        # 반드시 선택한 챕터의 본문만 사용!
+        selected_title = titles[chapter_idx]
         selected_text = chapters[chapter_idx]
+
+        st.markdown(f"### 📄 선택한 챕터: {selected_title}")
 
         with st.spinner("🧠 요약 중..."):
             summary_prompt_ko = f"다음 글을 한국어로 요약해줘:\n\n{selected_text[:4000]}"
