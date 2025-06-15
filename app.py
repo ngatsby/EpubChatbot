@@ -1,8 +1,8 @@
 import streamlit as st
 import tempfile
 import os
-import faiss
 import numpy as np
+import faiss
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 from ebooklib import epub
@@ -33,15 +33,12 @@ def extract_epub_chapters(epub_path):
     book = epub.read_epub(epub_path)
     titles, chapters = [], []
 
-    # TOC에서 (title, href) 추출
     def flatten_toc(toc):
         result = []
         for item in toc:
             if isinstance(item, epub.Link):
                 result.append((item.title, item.href))
             elif isinstance(item, tuple) and len(item) == 2:
-                # (section_title, [subitems])
-                # section_title = item[0]  # 필요시 사용
                 result.extend(flatten_toc(item[1]))
             elif isinstance(item, list):
                 result.extend(flatten_toc(item))
@@ -55,7 +52,7 @@ def extract_epub_chapters(epub_path):
         if item is not None:
             soup = BeautifulSoup(item.get_content(), "html.parser")
             text = soup.get_text(separator="\n", strip=True)
-            if len(text.strip()) > 100:  # 내용 없는 챕터는 제외
+            if len(text.strip()) > 100:
                 titles.append(title.strip())
                 chapters.append(text)
     return titles, chapters
@@ -99,11 +96,8 @@ if uploaded_file:
 
         selected_text = chapters[chapter_idx]
 
-        with st.spinner("🧠 임베딩 및 요약 중..."):
-            selected_embedding = create_embeddings([selected_text])
-            index = build_faiss_index(np.array(selected_embedding))
-
-            # 요약 요청
+        with st.spinner("🧠 요약 중..."):
+            # 선택 챕터만 요약
             summary_prompt_ko = f"다음 글을 한국어로 요약해줘:\n\n{selected_text[:4000]}"
             summary_prompt_en = f"Summarize the following text in English:\n\n{selected_text[:4000]}"
 
@@ -121,8 +115,7 @@ if uploaded_file:
 
         question = st.text_input("질문을 입력하세요 (선택한 챕터 기준)")
         if question:
-            question_embedding = embedder.encode([question])
-            D, I = index.search(np.array(question_embedding), k=1)
+            # 선택 챕터만 context로 사용
             context = selected_text
             prompt = f"""
 다음 글을 참고하여 질문에 답해줘.
