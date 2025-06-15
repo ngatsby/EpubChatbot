@@ -7,7 +7,6 @@ import os
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import google.generativeai as genai
-import textwrap
 
 # --- 초기 설정 ---
 GEMINI_API_KEY = st.secrets.get("Key")
@@ -88,11 +87,74 @@ if uploaded_file:
         selected_title = selected_chapter["title"]
         selected_text = selected_chapter["text"]
 
-        # 본문 미리보기 제거, 제목만 표시
+        # 본문 미리보기 없이, 제목만 표시
         st.markdown(f"#### 📄 선택한 챕터: {selected_title}")
 
         with st.spinner("🧠 요약 중..."):
             summary_prompt_ko = (
                 f"아래 글은 '{selected_title}'라는 챕터의 전체 본문이야. "
                 f"이 글만 참고해서 한국어로 5줄 이내로 요약해줘.\n\n"
-                f"{textwrap.shorten(selected
+                f"{selected_text[:4000]}"
+            )
+            summary_prompt_en = (
+                f"This is the full text of the chapter titled '{selected_title}'. "
+                f"Summarize ONLY this text in English in less than 5 sentences.\n\n"
+                f"{selected_text[:4000]}"
+            )
+
+            summary_ko = ask_gemini(summary_prompt_ko)
+            summary_en = ask_gemini(summary_prompt_en)
+
+        st.subheader("📝 요약")
+        st.markdown("**🇰🇷 한국어 요약:**")
+        st.write(summary_ko)
+        st.markdown("**🇺🇸 English Summary:**")
+        st.write(summary_en)
+
+        st.divider()
+        st.subheader("💬 챕터 기반 질의응답")
+
+        question = st.text_input("질문을 입력하세요 (선택한 챕터 기준)")
+        if question:
+            context = selected_text
+            prompt = f"""
+아래는 '{selected_title}'라는 챕터의 전체 본문이야. 이 본문만 참고해서 질문에 답해줘.
+
+---
+
+{context}
+
+---
+
+질문: {question}
+"""
+            answer = ask_gemini(prompt)
+            st.markdown("**🤖 답변:**")
+            st.write(answer)
+
+        st.divider()
+        st.subheader("🌐 전체 문서 기반 질의응답")
+
+        global_question = st.text_input("전체 문서에 대해 질문하세요")
+        if global_question:
+            with st.spinner("전체 문서에서 답변 중..."):
+                full_text = "\n".join([c["text"] for c in chapters])
+                prompt = f"""
+다음 ePub 전체 내용을 바탕으로 질문에 답하세요.
+
+---
+
+{full_text[:8000]}
+
+---
+
+질문: {global_question}
+"""
+                global_answer = ask_gemini(prompt)
+                st.markdown("**🌍 전체 문서 응답:**")
+                st.write(global_answer)
+
+    try:
+        os.remove(epub_path)
+    except:
+        pass
