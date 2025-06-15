@@ -8,7 +8,6 @@ from ebooklib import epub
 from bs4 import BeautifulSoup
 import google.generativeai as genai
 
-# --- 초기 설정 ---
 GEMINI_API_KEY = st.secrets.get("Key")
 if not GEMINI_API_KEY:
     st.error("Gemini API key not found. Please add 'Key' to your secrets.")
@@ -19,15 +18,13 @@ genai.configure(api_key=GEMINI_API_KEY)
 @st.cache_resource
 def load_gemini_model():
     return genai.GenerativeModel("models/gemini-1.5-flash")
-
 model = load_gemini_model()
-
-# --- 함수들 ---
 
 def extract_epub_chapters(epub_path):
     book = epub.read_epub(epub_path)
     chapters = []
 
+    # 1. TOC 기반 추출
     def flatten_toc(toc):
         result = []
         for item in toc:
@@ -38,9 +35,7 @@ def extract_epub_chapters(epub_path):
             elif isinstance(item, list):
                 result.extend(flatten_toc(item))
         return result
-
     toc_entries = flatten_toc(book.toc)
-
     skip_keywords = ['표지', '차례', '목차', '저작권', '판권', 'prologue', 'contents', 'copyright', 'cover']
 
     for title, href in toc_entries:
@@ -51,33 +46,18 @@ def extract_epub_chapters(epub_path):
         if item is None:
             continue
         soup = BeautifulSoup(item.get_content(), "html.parser")
-        # 헤더 태그(h1~h3) 기준으로 챕터 분리
-        headers = soup.find_all(['h1', 'h2', 'h3'])
-        if not headers:
-            # 헤더가 없으면 전체 텍스트
-            text = soup.get_text(separator="\n", strip=True)
-            if len(text.strip()) > 200:
-                chapters.append({"title": title, "text": text.strip()})
-            continue
+        text = soup.get_text(separator="\n", strip=True)
+        if len(text.strip()) > 50:
+            chapters.append({"title": title, "text": text.strip()})
 
-        # 각 헤더별로 본문 분리
-        for idx, header in enumerate(headers):
-            chap_title = header.get_text(separator=" ", strip=True)
-            if chap_title != title:
-                continue
-            # 본문 추출: 현재 헤더부터 다음 헤더 전까지
-            content = []
-            for sibling in header.next_siblings:
-                if sibling.name in ['h1', 'h2', 'h3']:
-                    break
-                if isinstance(sibling, str):
-                    content.append(sibling.strip())
-                else:
-                    content.append(sibling.get_text(separator="\n", strip=True))
-            text = "\n".join([t for t in content if t])
-            if len(text.strip()) > 100:
-                chapters.append({"title": title, "text": text.strip()})
-            break  # 같은 제목이 여러 번 등장할 경우 첫 번째만 사용
+    # 2. TOC에서 아무것도 추출하지 못했다면 spine 기반으로 추출
+    if not chapters:
+        for idx, item in enumerate(book.get_items_of_type(epub.ITEM_DOCUMENT)):
+            soup = BeautifulSoup(item.get_content(), "html.parser")
+            text = soup.get_text(separator="\n", strip=True)
+            # spine에는 제목이 없으므로 임시 제목 부여
+            if len(text.strip()) > 50:
+                chapters.append({"title": f"Chapter {idx+1}", "text": text.strip()})
 
     return chapters
 
@@ -87,8 +67,6 @@ def ask_gemini(prompt_text):
         return response.text.strip()
     except Exception as e:
         return f"❌ Gemini 응답 오류: {e}"
-
-# --- 앱 UI ---
 
 st.title("📖 ePub 챕터 요약 & 챗봇")
 
