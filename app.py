@@ -32,7 +32,7 @@ def extract_epub_chapters(epub_path):
         result = []
         for item in toc:
             if isinstance(item, epub.Link):
-                result.append((item.title, item.href))
+                result.append((item.title.strip(), item.href))
             elif isinstance(item, tuple) and len(item) == 2:
                 result.extend(flatten_toc(item[1]))
             elif isinstance(item, list):
@@ -48,11 +48,37 @@ def extract_epub_chapters(epub_path):
             continue
         href_clean = href.split('#')[0]
         item = book.get_item_with_href(href_clean)
-        if item is not None:
-            soup = BeautifulSoup(item.get_content(), "html.parser")
+        if item is None:
+            continue
+        soup = BeautifulSoup(item.get_content(), "html.parser")
+        # 헤더 태그(h1~h3) 기준으로 챕터 분리
+        headers = soup.find_all(['h1', 'h2', 'h3'])
+        if not headers:
+            # 헤더가 없으면 전체 텍스트
             text = soup.get_text(separator="\n", strip=True)
             if len(text.strip()) > 200:
-                chapters.append({"title": title.strip(), "text": text.strip()})
+                chapters.append({"title": title, "text": text.strip()})
+            continue
+
+        # 각 헤더별로 본문 분리
+        for idx, header in enumerate(headers):
+            chap_title = header.get_text(separator=" ", strip=True)
+            if chap_title != title:
+                continue
+            # 본문 추출: 현재 헤더부터 다음 헤더 전까지
+            content = []
+            for sibling in header.next_siblings:
+                if sibling.name in ['h1', 'h2', 'h3']:
+                    break
+                if isinstance(sibling, str):
+                    content.append(sibling.strip())
+                else:
+                    content.append(sibling.get_text(separator="\n", strip=True))
+            text = "\n".join([t for t in content if t])
+            if len(text.strip()) > 100:
+                chapters.append({"title": title, "text": text.strip()})
+            break  # 같은 제목이 여러 번 등장할 경우 첫 번째만 사용
+
     return chapters
 
 def ask_gemini(prompt_text):
@@ -87,7 +113,6 @@ if uploaded_file:
         selected_title = selected_chapter["title"]
         selected_text = selected_chapter["text"]
 
-        # 본문 미리보기 없이, 제목만 표시
         st.markdown(f"#### 📄 선택한 챕터: {selected_title}")
 
         with st.spinner("🧠 요약 중..."):
