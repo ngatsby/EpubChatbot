@@ -125,4 +125,24 @@ if uploaded_file:
 
         global_question = st.text_input("전체 문서에 대해 질문하세요")
         if global_question:
-            with st.spinner("전체 문
+            with st.spinner("전체 문서에서 답변 중..."):
+                full_text = "\n".join([c["text"] for c in chapters])
+                prompt = f"""
+다음 ePub 전체 내용을 바탕으로 질문에 답하세요.
+
+---
+
+{full_text[:8000]}
+
+---
+
+질문: {global_question}
+"""
+                global_answer = ask_gemini(prompt)
+                st.markdown("**🌍 전체 문서 응답:**")
+                st.write(global_answer)
+
+    try:
+        os.remove(epub_path)
+    except:
+        pass
