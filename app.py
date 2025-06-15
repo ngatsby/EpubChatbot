@@ -1,4 +1,8 @@
 import streamlit as st
+
+# 반드시 첫 줄에 위치!
+st.set_page_config(page_title="📚 ePub 챗봇", layout="wide")
+
 import tempfile
 import os
 import numpy as np
@@ -57,15 +61,6 @@ def extract_epub_chapters(epub_path):
                 chapters.append(text)
     return titles, chapters
 
-def create_embeddings(texts):
-    return embedder.encode(texts)
-
-def build_faiss_index(embeddings):
-    dim = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dim)
-    index.add(embeddings)
-    return index
-
 def ask_gemini(prompt_text):
     try:
         response = model.generate_content(prompt_text)
@@ -75,7 +70,6 @@ def ask_gemini(prompt_text):
 
 # --- 앱 UI ---
 
-st.set_page_config(page_title="📚 ePub 챗봇", layout="wide")
 st.title("📖 ePub 챕터 요약 & 챗봇")
 
 uploaded_file = st.file_uploader("📤 ePub 파일 업로드", type="epub")
@@ -97,7 +91,6 @@ if uploaded_file:
         selected_text = chapters[chapter_idx]
 
         with st.spinner("🧠 요약 중..."):
-            # 선택 챕터만 요약
             summary_prompt_ko = f"다음 글을 한국어로 요약해줘:\n\n{selected_text[:4000]}"
             summary_prompt_en = f"Summarize the following text in English:\n\n{selected_text[:4000]}"
 
@@ -115,7 +108,6 @@ if uploaded_file:
 
         question = st.text_input("질문을 입력하세요 (선택한 챕터 기준)")
         if question:
-            # 선택 챕터만 context로 사용
             context = selected_text
             prompt = f"""
 다음 글을 참고하여 질문에 답해줘.
