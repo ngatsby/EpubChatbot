@@ -7,6 +7,8 @@ import os
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import google.generativeai as genai
+from gtts import gTTS  # TTS 라이브러리 추가
+import io
 
 GEMINI_API_KEY = st.secrets.get("Key")
 if not GEMINI_API_KEY:
@@ -103,8 +105,21 @@ if uploaded_file:
         st.subheader("📝 요약")
         st.markdown("**🇰🇷 한국어 요약:**")
         st.write(summary_ko)
+        # 한국어 요약 TTS 버튼
+        if st.button("🔊 한국어 요약 듣기"):
+            tts_ko = gTTS(summary_ko, lang='ko')
+            mp3_fp = io.BytesIO()
+            tts_ko.write_to_fp(mp3_fp)
+            st.audio(mp3_fp.getvalue(), format="audio/mp3")
+
         st.markdown("**🇺🇸 English Summary:**")
         st.write(summary_en)
+        # 영어 요약 TTS 버튼
+        if st.button("🔊 영어 요약 듣기"):
+            tts_en = gTTS(summary_en, lang='en')
+            mp3_fp = io.BytesIO()
+            tts_en.write_to_fp(mp3_fp)
+            st.audio(mp3_fp.getvalue(), format="audio/mp3")
 
         st.divider()
         st.subheader("💬 챕터 기반 질의응답")
@@ -126,6 +141,12 @@ if uploaded_file:
             answer = ask_gemini(prompt)
             st.markdown("**🤖 답변:**")
             st.write(answer)
+            # 질의응답 TTS 버튼
+            if st.button("🔊 답변 듣기"):
+                tts_answer = gTTS(answer, lang='ko')
+                mp3_fp = io.BytesIO()
+                tts_answer.write_to_fp(mp3_fp)
+                st.audio(mp3_fp.getvalue(), format="audio/mp3")
 
         st.divider()
         st.subheader("🌐 전체 문서 기반 질의응답")
@@ -148,6 +169,12 @@ if uploaded_file:
                 global_answer = ask_gemini(prompt)
                 st.markdown("**🌍 전체 문서 응답:**")
                 st.write(global_answer)
+                # 전체 문서 응답 TTS 버튼
+                if st.button("🔊 전체 문서 응답 듣기"):
+                    tts_global = gTTS(global_answer, lang='ko')
+                    mp3_fp = io.BytesIO()
+                    tts_global.write_to_fp(mp3_fp)
+                    st.audio(mp3_fp.getvalue(), format="audio/mp3")
 
     try:
         os.remove(epub_path)
