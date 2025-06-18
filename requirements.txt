@@ -5,3 +5,4 @@ sentence-transformers
 faiss-cpu
 google-generativeai
 numpy
+gTTS
